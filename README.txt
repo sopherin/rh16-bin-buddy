@@ -4,13 +4,15 @@ RH16 Bin Buddy
 This is a small offline-friendly web applet for RH16 3UP bin reminders.
 
 How to use:
-1. Open index.html in a browser.
-2. Open the official Mid Sussex checker from inside the app.
+1. Host these files on GitHub Pages or another HTTPS static host.
+2. Open the app, then open the official Mid Sussex checker from inside it.
 3. Enter RH16 3UP, choose your exact address, and copy the next dates into the app.
 4. Save. The app will calculate future Food, Recycling, Rubbish, and optional Garden collections.
 5. Use Export calendar to create an .ics file with evening-before reminders.
+6. Use Share household link to send a pre-populated link to another household member.
 
 Notes:
-- Data is stored locally in your browser only.
+- Your normal saved data is stored locally in your browser.
+- Shared household links contain the dates and reminder times, but not your exact address.
 - The normal repeating pattern can change around Christmas/New Year, so check the official Mid Sussex page then.
-- To install as a PWA on a phone, host the folder on an HTTPS page and choose Add to Home Screen.
+- To install as a PWA on a phone, open the hosted site in Safari/Chrome and choose Add to Home Screen.

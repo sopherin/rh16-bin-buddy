@@ -350,6 +350,26 @@
 
     .notice p { margin: 0; }
 
+    .share-panel {
+      display: grid;
+      gap: 12px;
+    }
+
+    .share-link-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .share-link-row input {
+      font-size: 0.86rem;
+    }
+
+    @media (max-width: 560px) {
+      .share-link-row { grid-template-columns: 1fr; }
+    }
+
     .link-list {
       display: grid;
       gap: 10px;
@@ -441,6 +461,7 @@
         <div class="controls">
           <a class="button-link" href="https://waste.services.midsussex.gov.uk/" target="_blank" rel="noopener">Open official checker</a>
           <button type="button" class="secondary" id="exportIcs" disabled>Export calendar</button>
+          <button type="button" class="secondary" id="shareSchedule" disabled>Share household link</button>
           <button type="button" class="ghost" id="copyTonight" disabled>Copy reminder</button>
         </div>
       </section>
@@ -492,6 +513,14 @@
           </div>
         </form>
 
+        <div id="sharePanel" class="notice share-panel hidden">
+          <p><strong>Household link ready:</strong> this link includes the collection dates and reminder times, but not your exact address. Send it to another household member and their app will open already filled in.</p>
+          <div class="share-link-row">
+            <input type="text" id="shareLinkOutput" readonly aria-label="Shareable household schedule link">
+            <button type="button" class="secondary" id="copyShareLink">Copy link</button>
+          </div>
+        </div>
+
         <div class="notice">
           <p><strong>Christmas/New Year:</strong> this app follows the normal repeating pattern. Check the official checker around Christmas and New Year, when Mid Sussex may publish temporary changes.</p>
         </div>
@@ -523,7 +552,7 @@
     </main>
 
     <footer>
-      Private, offline-friendly helper. It does not send your address or bin dates anywhere.
+      Private, offline-friendly helper. It does not send your address anywhere. Shared links contain the dates you choose to share.
     </footer>
   </div>
 
@@ -545,9 +574,13 @@
     const statusBox = document.getElementById("statusBox");
     const collectionList = document.getElementById("collectionList");
     const exportBtn = document.getElementById("exportIcs");
+    const shareBtn = document.getElementById("shareSchedule");
     const copyBtn = document.getElementById("copyTonight");
     const printBtn = document.getElementById("printSchedule");
     const clearBtn = document.getElementById("clearSchedule");
+    const sharePanel = document.getElementById("sharePanel");
+    const shareLinkOutput = document.getElementById("shareLinkOutput");
+    const copyShareLinkBtn = document.getElementById("copyShareLink");
     const toast = document.getElementById("toast");
 
     function defaultSettings() {
@@ -576,7 +609,7 @@
     }
 
     function mergeSettings(base, stored) {
-      const merged = structuredClone(base);
+      const merged = JSON.parse(JSON.stringify(base));
       if (stored.putOutTime) merged.putOutTime = stored.putOutTime;
       if (stored.reminderTime) merged.reminderTime = stored.reminderTime;
       if (stored.bins) {
@@ -589,6 +622,95 @@
 
     function saveSettings(settings) {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+    }
+
+    function isValidDateString(value) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+      return toDateKey(parseDate(value)) === value;
+    }
+
+    function isValidTimeString(value) {
+      return /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
+    }
+
+    function compactSettings(settings) {
+      const compact = {
+        v: 1,
+        p: settings.putOutTime,
+        r: settings.reminderTime,
+        b: {}
+      };
+      for (const def of BIN_DEFS) {
+        const bin = settings.bins[def.id] || {};
+        compact.b[def.id] = {
+          e: !!bin.enabled,
+          d: bin.startDate || ""
+        };
+      }
+      return compact;
+    }
+
+    function expandSharedSettings(payload) {
+      const settings = defaultSettings();
+      if (payload && isValidTimeString(payload.p || "")) settings.putOutTime = payload.p;
+      if (payload && isValidTimeString(payload.r || "")) settings.reminderTime = payload.r;
+      if (payload && payload.b && typeof payload.b === "object") {
+        for (const def of BIN_DEFS) {
+          const shared = payload.b[def.id];
+          if (!shared || typeof shared !== "object") continue;
+          settings.bins[def.id].enabled = !!shared.e;
+          settings.bins[def.id].startDate = isValidDateString(shared.d || "") ? shared.d : "";
+        }
+      }
+      return settings;
+    }
+
+    function encodeShareSettings(settings) {
+      const json = JSON.stringify(compactSettings(settings));
+      return btoa(json).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+    }
+
+    function decodeShareSettings(encoded) {
+      const base64 = encoded.replace(/-/g, "+").replace(/_/g, "/");
+      const padded = base64 + "=".repeat((4 - base64.length % 4) % 4);
+      return expandSharedSettings(JSON.parse(atob(padded)));
+    }
+
+    function sharedSettingsFromUrl() {
+      if (!window.location.hash) return null;
+      const hash = window.location.hash.slice(1);
+      const params = new URLSearchParams(hash);
+      const encoded = params.get("schedule") || params.get("s");
+      if (!encoded) return null;
+      try {
+        return decodeShareSettings(encoded);
+      } catch (err) {
+        console.warn("Could not read shared schedule", err);
+        return null;
+      }
+    }
+
+    function makeShareUrl(settings) {
+      const url = new URL(window.location.href);
+      url.search = "";
+      url.hash = `schedule=${encodeShareSettings(settings)}`;
+      return url.toString();
+    }
+
+    function showShareLink(settings) {
+      const link = makeShareUrl(settings);
+      shareLinkOutput.value = link;
+      sharePanel.classList.remove("hidden");
+      return link;
+    }
+
+    async function copyOrPrompt(text, successMessage, promptMessage) {
+      try {
+        await navigator.clipboard.writeText(text);
+        showToast(successMessage);
+      } catch (err) {
+        window.prompt(promptMessage, text);
+      }
     }
 
     function populateForm(settings) {
@@ -683,7 +805,9 @@
       const missing = validate(settings);
       const configured = missing.length === 0 && BIN_DEFS.some(def => settings.bins[def.id].enabled);
       exportBtn.disabled = !configured;
+      shareBtn.disabled = !configured;
       copyBtn.disabled = !configured;
+      if (!configured) sharePanel.classList.add("hidden");
 
       if (!configured) {
         statusBox.className = "big-status";
@@ -910,15 +1034,44 @@
         showToast("Calendar file created");
       });
 
+      shareBtn.addEventListener("click", async () => {
+        const settings = readForm();
+        const missing = validate(settings);
+        if (missing.length) {
+          showToast(`Add dates for: ${missing.join(", ")}`);
+          return;
+        }
+        saveSettings(settings);
+        render(settings);
+        const link = showShareLink(settings);
+        if (navigator.share) {
+          try {
+            await navigator.share({
+              title: "RH16 Bin Buddy schedule",
+              text: "Here is our household bin schedule.",
+              url: link
+            });
+            showToast("Share link sent");
+            return;
+          } catch (err) {
+            if (err && err.name === "AbortError") {
+              showToast("Share link ready");
+              return;
+            }
+          }
+        }
+        await copyOrPrompt(link, "Household link copied", "Copy this household link:");
+      });
+
+      copyShareLinkBtn.addEventListener("click", async () => {
+        const link = shareLinkOutput.value || showShareLink(readForm());
+        await copyOrPrompt(link, "Household link copied", "Copy this household link:");
+      });
+
       copyBtn.addEventListener("click", async () => {
         const settings = readForm();
         const text = makeReminderText(settings);
-        try {
-          await navigator.clipboard.writeText(text);
-          showToast("Reminder copied");
-        } catch (err) {
-          window.prompt("Copy this reminder:", text);
-        }
+        await copyOrPrompt(text, "Reminder copied", "Copy this reminder:");
       });
     }
 
@@ -932,9 +1085,15 @@
     }
 
     bindEvents();
-    const settings = loadSettings();
+    const sharedSettings = sharedSettingsFromUrl();
+    const settings = sharedSettings || loadSettings();
+    if (sharedSettings) {
+      saveSettings(settings);
+      if (history.replaceState) history.replaceState(null, "", window.location.pathname + window.location.search);
+    }
     populateForm(settings);
     render(settings);
+    if (sharedSettings) showToast("Shared schedule loaded");
     registerServiceWorker();
   </script>
 </body>
